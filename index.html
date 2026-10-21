@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>현장 복원</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { background: #0d0d0d; color: #eee; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+
+header { width: 100%; padding: 14px 40px; background: #111; border-bottom: 2px solid #e94560; display: flex; justify-content: space-between; align-items: center; }
+header h1 { font-size: 1.2rem; color: #e94560; letter-spacing: 3px; }
+
+#submit-btn { padding: 8px 22px; background: #e94560; border: none; border-radius: 4px; color: #fff; font-size: 0.9rem; font-weight: bold; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+#submit-btn:hover { background: #c73652; }
+
+/* 스테이지 바 */
+#stage-bar { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; padding: 12px 20px 0; }
+.stage-dot { width: 30px; height: 30px; border-radius: 4px; border: 1px solid #333; background: #111; color: #555; font-size: 0.7rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: inherit; }
+.stage-dot.current { border-color: #e94560; background: #e94560; color: #fff; }
+.stage-dot.done    { border-color: #27ae60; color: #27ae60; }
+.stage-dot.locked  { opacity: 0.3; cursor: not-allowed; }
+
+/* ── 인트로 화면 (전체화면 씬) ── */
+#intro-screen {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 50;
+  cursor: pointer;
+}
+
+/* 배경 SVG */
+#intro-bg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+}
+#intro-bg svg { width: 100%; height: 100%; display: block; }
+
+/* 흐림 + 어두운 오버레이 */
+#intro-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* 사건 번호 + 제목 (화면 중앙) */
+#intro-title-box {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -60%);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+#intro-title-box.show { opacity: 1; }
+#intro-case-num { font-size: 0.85rem; color: #e94560; letter-spacing: 5px; margin-bottom: 10px; }
+#intro-title    { font-size: 2rem; font-weight: bold; color: #fff; letter-spacing: 2px; text-shadow: 0 0 20px rgba(0,0,0,0.8); }
+#intro-place    { font-size: 0.85rem; color: #aaa; letter-spacing: 2px; margin-top: 8px; }
+
+/* 하단 자막 바 */
+#subtitle-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.75);
+  border-top: 1px solid #333;
+  padding: 20px 60px 24px;
+  transform: translateY(100%);
+  transition: transform 0.4s ease;
+}
+#subtitle-bar.show { transform: translateY(0); }
+
+#subtitle-speaker {
+  font-size: 0.75rem; color: #e94560;
+  letter-spacing: 3px; margin-bottom: 8px;
+}
+#subtitle-text {
+  font-size: 1rem; color: #eee;
+  line-height: 1.7; min-height: 2em;
+  white-space: pre-line;
+}
+#subtitle-hint {
+  font-size: 0.7rem; color: #555;
+  text-align: right; margin-top: 10px;
+  letter-spacing: 2px;
+}
+#subtitle-hint.pulse {
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* ── 게임 화면 ── */
+#game-screen { display: none; flex-direction: column; align-items: center; width: 100%; }
+
+main { display: flex; align-items: flex-start; justify-content: center; gap: 40px; padding: 30px 20px; flex: 1; }
+.photo-card { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.photo-card > span { font-size: 0.75rem; color: #666; letter-spacing: 2px; }
+
+.photo-frame { width: 480px; height: 360px; border: 1px solid #333; border-radius: 4px; overflow: hidden; background: #000; position: relative; }
+.photo-frame svg, .photo-frame img { width: 100%; height: 100%; display: block; }
+
+/* 편집 이미지 레이어 */
+#edit-layer {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+}
+#edit-layer svg { width: 140%; height: 140%; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); }
+
+/* 패널 */
+#panel { width: 480px; background: #111; border: 1px solid #333; border-top: none; border-radius: 0 0 4px 4px; padding: 14px; display: none; }
+#panel.open { display: block; }
+.row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.row:last-child { margin-bottom: 0; }
+.row label { width: 36px; font-size: 0.75rem; color: #888; flex-shrink: 0; }
+.row input[type="range"] { flex: 1; height: 6px; border-radius: 3px; outline: none; cursor: pointer; -webkit-appearance: none; appearance: none; background: #222; }
+.row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #e94560; border: 2px solid #fff; cursor: pointer; }
+.row .val { width: 40px; font-size: 0.75rem; color: #f0c040; text-align: right; flex-shrink: 0; }
+
+#pos-row { display: flex; justify-content: center; gap: 8px; }
+#pos-row button { width: 56px; height: 48px; background: #1a1a1a; border: 1px solid #e94560; border-radius: 4px; color: #fff; font-size: 1.2rem; cursor: pointer; }
+#pos-row button:hover { background: #e94560; }
+
+#side-btns { display: flex; flex-direction: column; gap: 10px; padding-top: 28px; }
+.side-btn { width: 50px; height: 50px; border: 1px solid #333; border-radius: 4px; background: #111; color: #888; font-size: 1.2rem; cursor: pointer; transition: all 0.15s; font-family: inherit; }
+.side-btn:hover  { border-color: #e94560; color: #fff; }
+.side-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
+
+/* ── 결과 모달 ── */
+#modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); justify-content: center; align-items: center; z-index: 100; }
+#modal-bg.open { display: flex; }
+#modal { background: #111; border: 1px solid #e94560; border-radius: 8px; padding: 40px 50px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 480px; width: 90%; }
+#modal-case    { font-size: 0.75rem; color: #e94560; letter-spacing: 3px; }
+#modal-score   { font-size: 3rem; font-weight: bold; color: #f0c040; }
+#modal-grade   { font-size: 1.4rem; font-weight: bold; }
+#modal-divider { border: none; border-top: 1px solid #333; width: 100%; }
+#modal-dialogue { font-size: 0.9rem; color: #ccc; line-height: 1.8; min-height: 50px; white-space: pre-line; }
+#modal-btns  { display: flex; gap: 10px; margin-top: 4px; }
+#modal-btns button { padding: 8px 20px; border: none; border-radius: 4px; font-size: 0.85rem; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+#btn-retry { background: #333; color: #fff; }
+#btn-next  { background: #e94560; color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔍 현장 복원</h1>
+  <button id="submit-btn" onclick="submitAnswer()" style="display:none">제출</button>
+</header>
+
+<div id="stage-bar"></div>
+
+<!-- 인트로 화면 (전체화면 씬) -->
+<div id="intro-screen" onclick="introClick()">
+  <div id="intro-bg"></div>
+  <div id="intro-overlay"></div>
+
+  <div id="intro-title-box">
+    <div id="intro-case-num">CASE #001</div>
+    <div id="intro-title">제목</div>
+    <div id="intro-place">📍 장소</div>
+  </div>
+
+  <div id="subtitle-bar">
+    <div id="subtitle-speaker"></div>
+    <div id="subtitle-text"></div>
+    <div id="subtitle-hint">클릭하여 계속 ▶</div>
+  </div>
+</div>
+
+<!-- 게임 화면 -->
+<div id="game-screen">
+  <main>
+    <div class="photo-card">
+      <span>[ 원본 사진 ]</span>
+      <div class="photo-frame" id="target-frame"></div>
+    </div>
+
+    <div class="photo-card">
+      <span>[ 손상된 사진 ]</span>
+      <div class="photo-frame">
+        <div id="edit-layer"></div>
+      </div>
+      <div id="panel">
+        <div id="color-panel">
+          <div class="row"><label>밝기</label><input id="sl-brightness" type="range" min="0" max="200" oninput="set('brightness',this)"/><span class="val">-</span></div>
+          <div class="row"><label>대비</label><input id="sl-contrast"   type="range" min="0" max="200" oninput="set('contrast',this)"  /><span class="val">-</span></div>
+          <div class="row"><label>색조</label><input id="sl-hue"        type="range" min="0" max="360" oninput="set('hue',this)"        /><span class="val">-</span></div>
+        </div>
+        <div id="pos-panel" style="display:none">
+          <div id="pos-row">
+            <button onclick="movePos('up')">↑</button>
+            <button onclick="movePos('left')">←</button>
+            <button onclick="movePos('down')">↓</button>
+            <button onclick="movePos('right')">→</button>
+          </div>
+        </div>
+        <div id="blur-panel" style="display:none">
+          <div class="row"><label>블러</label><input id="sl-blur" type="range" min="0" max="40" step="1" oninput="set('blur',this)"/><span class="val">-</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="side-btns">
+      <button class="side-btn" onclick="toggle('color-panel',this)" title="색상">🎨</button>
+      <button class="side-btn" onclick="toggle('pos-panel',this)"   title="위치">↔</button>
+      <button class="side-btn" onclick="toggle('blur-panel',this)"  title="블러">🌫</button>
+    </div>
+  </main>
+</div>
+
+<!-- 결과 모달 -->
+<div id="modal-bg">
+  <div id="modal">
+    <div id="modal-case">CASE #001</div>
+    <div id="modal-score"></div>
+    <div id="modal-grade"></div>
+    <hr id="modal-divider"/>
+    <div id="modal-dialogue"></div>
+    <div id="modal-btns">
+      <button id="btn-retry" onclick="retry()">다시하기</button>
+      <button id="btn-next"  onclick="nextStage()">다음 사건 →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SVG 사건 현장 10개 ──
+// 모두 viewBox="0 0 480 360" 기준
+const scenes = [
+
+// 1. 밀실 살인 - 서재
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 방 배경 -->
+  <rect width="480" height="360" fill="#1a0f0a"/>
+  <!-- 바닥 -->
+  <rect x="0" y="270" width="480" height="90" fill="#2a1a0e"/>
+  <!-- 바닥 무늬 -->
+  <line x1="0" y1="290" x2="480" y2="290" stroke="#3a2a1e" stroke-width="1"/>
+  <line x1="0" y1="320" x2="480" y2="320" stroke="#3a2a1e" stroke-width="1"/>
+  <line x1="120" y1="270" x2="120" y2="360" stroke="#3a2a1e" stroke-width="1"/>
+  <line x1="240" y1="270" x2="240" y2="360" stroke="#3a2a1e" stroke-width="1"/>
+  <line x1="360" y1="270" x2="360" y2="360" stroke="#3a2a1e" stroke-width="1"/>
+  <!-- 벽 -->
+  <rect x="0" y="0" width="480" height="270" fill="#2d1f15"/>
+  <!-- 벽지 무늬 -->
+  <pattern id="wp1" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+    <rect width="40" height="40" fill="none" stroke="#3d2f25" stroke-width="0.5"/>
+  </pattern>
+  <rect width="480" height="270" fill="url(#wp1)"/>
+  <!-- 책장 -->
+  <rect x="20" y="30" width="120" height="220" fill="#3d2510" rx="2"/>
+  <rect x="25" y="35" width="110" height="20" fill="#8B4513" rx="1"/>
+  <rect x="25" y="60" width="110" height="20" fill="#8B4513" rx="1"/>
+  <rect x="25" y="85" width="110" height="20" fill="#8B4513" rx="1"/>
+  <!-- 책들 -->
+  <rect x="28" y="37" width="12" height="16" fill="#e74c3c" rx="1"/>
+  <rect x="42" y="37" width="10" height="16" fill="#3498db" rx="1"/>
+  <rect x="54" y="37" width="14" height="16" fill="#2ecc71" rx="1"/>
+  <rect x="70" y="37" width="10" height="16" fill="#f39c12" rx="1"/>
+  <rect x="82" y="37" width="12" height="16" fill="#9b59b6" rx="1"/>
+  <rect x="28" y="62" width="10" height="16" fill="#1abc9c" rx="1"/>
+  <rect x="40" y="62" width="14" height="16" fill="#e67e22" rx="1"/>
+  <rect x="56" y="62" width="10" height="16" fill="#e74c3c" rx="1"/>
+  <rect x="68" y="62" width="12" height="16" fill="#95a5a6" rx="1"/>
+  <rect x="82" y="62" width="10" height="16" fill="#3498db" rx="1"/>
+  <!-- 책장 하단 -->
+  <rect x="25" y="110" width="110" height="130" fill="#2d1a08"/>
+  <!-- 창문 -->
+  <rect x="340" y="40" width="120" height="160" fill="#0a1a2a" rx="3"/>
+  <rect x="340" y="40" width="120" height="160" fill="none" stroke="#5a4a3a" stroke-width="6"/>
+  <line x1="400" y1="40" x2="400" y2="200" stroke="#5a4a3a" stroke-width="4"/>
+  <line x1="340" y1="120" x2="460" y2="120" stroke="#5a4a3a" stroke-width="4"/>
+  <!-- 달빛 -->
+  <circle cx="400" cy="85" r="25" fill="#fffde0" opacity="0.8"/>
+  <rect x="350" y="130" width="100" height="60" fill="#0a1a2a"/>
+  <!-- 커튼 -->
+  <path d="M340,40 Q360,80 350,200" fill="#4a2a1a" opacity="0.9"/>
+  <path d="M460,40 Q440,80 450,200" fill="#4a2a1a" opacity="0.9"/>
+  <!-- 책상 -->
+  <rect x="160" y="210" width="180" height="12" fill="#5a3010" rx="2"/>
+  <rect x="165" y="222" width="12" height="48" fill="#4a2808"/>
+  <rect x="322" y="222" width="12" height="48" fill="#4a2808"/>
+  <!-- 책상 위 물건들 -->
+  <!-- 램프 -->
+  <rect x="290" y="180" width="6" height="30" fill="#888"/>
+  <ellipse cx="293" cy="178" rx="18" ry="10" fill="#f0c040" opacity="0.9"/>
+  <circle cx="293" cy="178" r="8" fill="#fff9c0"/>
+  <!-- 서류들 -->
+  <rect x="170" y="198" width="60" height="12" fill="#f5e6d0" transform="rotate(-3,200,204)"/>
+  <rect x="175" y="196" width="60" height="12" fill="#f0dcc0" transform="rotate(2,205,202)"/>
+  <!-- 쓰러진 잉크병 -->
+  <rect x="240" y="203" width="14" height="18" fill="#2c3e50" rx="2" transform="rotate(-45,247,212)"/>
+  <ellipse cx="235" cy="215" rx="18" ry="5" fill="#1a0a3a" opacity="0.8"/>
+  <!-- 바닥에 쓰러진 캐릭터 -->
+  <!-- 몸통 -->
+  <ellipse cx="260" cy="305" rx="35" ry="18" fill="#2c3e50"/>
+  <!-- 팔 -->
+  <line x1="240" y1="300" x2="200" y2="285" stroke="#2c3e50" stroke-width="12" stroke-linecap="round"/>
+  <line x1="280" y1="300" x2="310" y2="318" stroke="#2c3e50" stroke-width="12" stroke-linecap="round"/>
+  <!-- 다리 -->
+  <line x1="245" y1="320" x2="215" y2="345" stroke="#2c3e50" stroke-width="14" stroke-linecap="round"/>
+  <line x1="275" y1="320" x2="295" y2="348" stroke="#2c3e50" stroke-width="14" stroke-linecap="round"/>
+  <!-- 머리 -->
+  <circle cx="260" cy="283" r="22" fill="#f5cba7"/>
+  <ellipse cx="260" cy="272" rx="22" ry="14" fill="#1a0a00"/>
+  <!-- 혈흔 -->
+  <ellipse cx="230" cy="295" rx="20" ry="8" fill="#8b0000" opacity="0.7"/>
+  <!-- 떨어진 유리잔 -->
+  <path d="M320,290 L330,320 L340,320 L350,290 Z" fill="#aaddff" opacity="0.5"/>
+  <ellipse cx="335" cy="322" rx="10" ry="3" fill="#aaddff" opacity="0.4"/>
+  <!-- 증거번호 -->
+  <rect x="195" y="268" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="206" y="280" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 2. 도심 골목 - 강도 사건
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 밤하늘 -->
+  <rect width="480" height="360" fill="#05050f"/>
+  <!-- 별 -->
+  <circle cx="50" cy="30" r="1.5" fill="#fff" opacity="0.8"/>
+  <circle cx="120" cy="15" r="1" fill="#fff" opacity="0.6"/>
+  <circle cx="200" cy="25" r="1.5" fill="#fff" opacity="0.9"/>
+  <circle cx="320" cy="10" r="1" fill="#fff" opacity="0.7"/>
+  <circle cx="420" cy="35" r="1.5" fill="#fff" opacity="0.8"/>
+  <!-- 건물 왼쪽 -->
+  <rect x="0" y="0" width="130" height="360" fill="#1a1a2a"/>
+  <rect x="0" y="0" width="130" height="360" fill="none" stroke="#2a2a3a" stroke-width="2"/>
+  <!-- 창문들 왼쪽 -->
+  <rect x="15" y="20" width="35" height="28" fill="#f0c040" opacity="0.8" rx="2"/>
+  <rect x="60" y="20" width="35" height="28" fill="#f0c040" opacity="0.6" rx="2"/>
+  <rect x="15" y="65" width="35" height="28" fill="#1a2a3a" rx="2"/>
+  <rect x="60" y="65" width="35" height="28" fill="#f0c040" opacity="0.4" rx="2"/>
+  <rect x="15" y="110" width="35" height="28" fill="#f0c040" opacity="0.7" rx="2"/>
+  <rect x="60" y="110" width="35" height="28" fill="#1a2a3a" rx="2"/>
+  <rect x="15" y="155" width="35" height="28" fill="#1a2a3a" rx="2"/>
+  <rect x="60" y="155" width="35" height="28" fill="#f0c040" opacity="0.5" rx="2"/>
+  <!-- 건물 오른쪽 -->
+  <rect x="350" y="0" width="130" height="360" fill="#1f1a2a"/>
+  <rect x="365" y="20" width="35" height="28" fill="#1a2a3a" rx="2"/>
+  <rect x="415" y="20" width="35" height="28" fill="#f0c040" opacity="0.9" rx="2"/>
+  <rect x="365" y="65" width="35" height="28" fill="#f0c040" opacity="0.5" rx="2"/>
+  <rect x="415" y="65" width="35" height="28" fill="#1a2a3a" rx="2"/>
+  <rect x="365" y="110" width="35" height="28" fill="#f0c040" opacity="0.3" rx="2"/>
+  <rect x="415" y="110" width="35" height="28" fill="#f0c040" opacity="0.8" rx="2"/>
+  <!-- 골목 바닥 -->
+  <rect x="130" y="200" width="220" height="160" fill="#1a1a1a"/>
+  <line x1="130" y1="220" x2="350" y2="220" stroke="#222" stroke-width="1"/>
+  <line x1="130" y1="250" x2="350" y2="250" stroke="#222" stroke-width="1"/>
+  <line x1="130" y1="280" x2="350" y2="280" stroke="#222" stroke-width="1"/>
+  <line x1="130" y1="310" x2="350" y2="310" stroke="#222" stroke-width="1"/>
+  <!-- 골목 벽 원근감 -->
+  <polygon points="130,0 130,200 350,200 350,0" fill="#0f0f1a"/>
+  <!-- 가로등 -->
+  <rect x="228" y="100" width="4" height="130" fill="#555"/>
+  <rect x="215" y="95" width="30" height="6" fill="#555" rx="3"/>
+  <ellipse cx="230" cy="95" rx="20" ry="8" fill="#fff9c0" opacity="0.9"/>
+  <circle cx="230" cy="92" r="6" fill="#fff"/>
+  <!-- 빛 원뿔 -->
+  <polygon points="215,95 245,95 280,230 180,230" fill="#fff9c0" opacity="0.07"/>
+  <!-- 쓰레기통 -->
+  <rect x="310" y="270" width="28" height="40" fill="#444" rx="3"/>
+  <rect x="308" y="265" width="32" height="8" fill="#555" rx="2"/>
+  <line x1="315" y1="273" x2="315" y2="308" stroke="#333" stroke-width="1"/>
+  <line x1="323" y1="273" x2="323" y2="308" stroke="#333" stroke-width="1"/>
+  <!-- 피해자 캐릭터 (쓰러짐) -->
+  <ellipse cx="200" cy="330" rx="30" ry="14" fill="#c0392b"/>
+  <line x1="185" y1="325" x2="155" y2="315" stroke="#c0392b" stroke-width="11" stroke-linecap="round"/>
+  <line x1="215" y1="325" x2="240" y2="335" stroke="#c0392b" stroke-width="11" stroke-linecap="round"/>
+  <line x1="188" y1="340" x2="168" y2="358" stroke="#c0392b" stroke-width="12" stroke-linecap="round"/>
+  <line x1="212" y1="340" x2="228" y2="356" stroke="#c0392b" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="200" cy="312" r="18" fill="#f5cba7"/>
+  <ellipse cx="200" cy="302" rx="18" ry="11" fill="#2c1a0a"/>
+  <!-- 범인 실루엣 (도망가는 중) -->
+  <ellipse cx="310" cy="285" rx="18" ry="12" fill="#111"/>
+  <line x1="300" y1="292" x2="280" y2="310" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <line x1="320" y1="292" x2="335" y2="308" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <line x1="303" y1="296" x2="288" y2="315" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <line x1="317" y1="296" x2="330" y2="316" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="310" cy="272" r="14" fill="#111"/>
+  <!-- 떨어진 지갑 -->
+  <rect x="160" y="345" width="25" height="15" fill="#8B4513" rx="3"/>
+  <line x1="160" y1="352" x2="185" y2="352" stroke="#6B3410" stroke-width="1.5"/>
+  <!-- 증거 번호 -->
+  <rect x="148" y="296" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="159" y="308" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 3. 미술관 도난 사건
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 흰 벽 미술관 -->
+  <rect width="480" height="360" fill="#e8e0d5"/>
+  <!-- 바닥 -->
+  <rect x="0" y="280" width="480" height="80" fill="#c8bfa8"/>
+  <!-- 바닥 타일 -->
+  <line x1="0" y1="310" x2="480" y2="310" stroke="#b8af98" stroke-width="1"/>
+  <line x1="96" y1="280" x2="96" y2="360" stroke="#b8af98" stroke-width="1"/>
+  <line x1="192" y1="280" x2="192" y2="360" stroke="#b8af98" stroke-width="1"/>
+  <line x1="288" y1="280" x2="288" y2="360" stroke="#b8af98" stroke-width="1"/>
+  <line x1="384" y1="280" x2="384" y2="360" stroke="#b8af98" stroke-width="1"/>
+  <!-- 걸린 그림 1 (정상) -->
+  <rect x="30" y="60" width="120" height="90" fill="#fff" stroke="#888" stroke-width="3"/>
+  <rect x="35" y="65" width="110" height="80" fill="#87CEEB"/>
+  <ellipse cx="90" cy="95" rx="25" ry="25" fill="#f0c040"/>
+  <rect x="50" y="110" width="80" height="30" fill="#2ecc71"/>
+  <!-- 그림 조명 -->
+  <polygon points="80,50 100,50 95,62 85,62" fill="#888"/>
+  <ellipse cx="90" cy="62" rx="15" ry="4" fill="#ffe" opacity="0.8"/>
+  <!-- 걸린 그림 2 (빈 액자 - 도난당함) -->
+  <rect x="180" y="60" width="120" height="90" fill="#fff" stroke="#888" stroke-width="3"/>
+  <rect x="185" y="65" width="110" height="80" fill="#ddd"/>
+  <!-- X 표시 - 없어진 그림 -->
+  <line x1="185" y1="65" x2="295" y2="145" stroke="#ccc" stroke-width="2"/>
+  <line x1="295" y1="65" x2="185" y2="145" stroke="#ccc" stroke-width="2"/>
+  <text x="240" y="112" font-size="14" fill="#aaa" text-anchor="middle">없어짐</text>
+  <!-- 그림 조명 2 -->
+  <polygon points="230,50 250,50 245,62 235,62" fill="#888"/>
+  <ellipse cx="240" cy="62" rx="15" ry="4" fill="#ffe" opacity="0.8"/>
+  <!-- 걸린 그림 3 -->
+  <rect x="330" y="60" width="120" height="90" fill="#fff" stroke="#888" stroke-width="3"/>
+  <rect x="335" y="65" width="110" height="80" fill="#8B4513"/>
+  <circle cx="390" cy="105" r="30" fill="#f5cba7"/>
+  <rect x="370" y="80" rx="5" ry="5" width="40" height="20" fill="#2c1a0a"/>
+  <!-- 그림 조명 3 -->
+  <polygon points="380,50 400,50 395,62 385,62" fill="#888"/>
+  <ellipse cx="390" cy="62" rx="15" ry="4" fill="#ffe" opacity="0.8"/>
+  <!-- 경비원 캐릭터 (놀란 표정) -->
+  <ellipse cx="240" cy="310" rx="22" ry="14" fill="#1a3a5c"/>
+  <line x1="225" y1="305" x2="195" y2="295" stroke="#1a3a5c" stroke-width="10" stroke-linecap="round"/>
+  <line x1="255" y1="305" x2="280" y2="298" stroke="#1a3a5c" stroke-width="10" stroke-linecap="round"/>
+  <line x1="228" y1="320" x2="210" y2="345" stroke="#1a3a5c" stroke-width="11" stroke-linecap="round"/>
+  <line x1="252" y1="320" x2="268" y2="345" stroke="#1a3a5c" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="240" cy="293" r="19" fill="#f5cba7"/>
+  <!-- 놀란 표정 -->
+  <circle cx="233" cy="290" r="4" fill="#fff"/>
+  <circle cx="247" cy="290" r="4" fill="#fff"/>
+  <circle cx="233" cy="290" r="2" fill="#222"/>
+  <circle cx="247" cy="290" r="2" fill="#222"/>
+  <path d="M234,300 Q240,304 246,300" fill="none" stroke="#222" stroke-width="2"/>
+  <ellipse cx="240" cy="281" rx="19" ry="12" fill="#2c1a0a"/>
+  <!-- 손전등 -->
+  <rect x="270" y="298" width="30" height="10" fill="#aaa" rx="4"/>
+  <ellipse cx="300" cy="303" rx="8" ry="8" fill="#ffe" opacity="0.9"/>
+  <!-- 밧줄 (침입 흔적) -->
+  <path d="M240,0 Q250,50 240,160 Q230,200 240,280" fill="none" stroke="#8B6914" stroke-width="4" stroke-dasharray="6,4"/>
+  <!-- 깨진 창문 -->
+  <rect x="195" y="180" width="90" height="70" fill="#87CEEB" opacity="0.4" stroke="#888" stroke-width="2"/>
+  <line x1="195" y1="215" x2="285" y2="215" stroke="#888" stroke-width="1.5"/>
+  <line x1="240" y1="180" x2="240" y2="250" stroke="#888" stroke-width="1.5"/>
+  <!-- 깨진 유리 -->
+  <path d="M240,200 L255,185 L260,200 L270,192 L265,207" fill="#87CEEB" opacity="0.6" stroke="#aaa" stroke-width="1"/>
+  <!-- 증거 번호 -->
+  <rect x="185" y="148" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="196" y="160" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 4. 항구 부두 - 밀수 사건
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 밤바다 -->
+  <rect width="480" height="360" fill="#050d1a"/>
+  <!-- 하늘 별 -->
+  <circle cx="60" cy="20" r="1.5" fill="#fff" opacity="0.7"/>
+  <circle cx="150" cy="40" r="1" fill="#fff" opacity="0.8"/>
+  <circle cx="280" cy="15" r="1.5" fill="#fff" opacity="0.6"/>
+  <circle cx="380" cy="30" r="1" fill="#fff" opacity="0.9"/>
+  <circle cx="450" cy="10" r="1.5" fill="#fff" opacity="0.7"/>
+  <!-- 달 -->
+  <circle cx="60" cy="50" r="30" fill="#fffde0" opacity="0.9"/>
+  <circle cx="75" cy="42" r="26" fill="#050d1a"/>
+  <!-- 바다 -->
+  <rect x="0" y="200" width="480" height="160" fill="#0a1a2a"/>
+  <!-- 파도 -->
+  <path d="M0,220 Q60,210 120,220 Q180,230 240,220 Q300,210 360,220 Q420,230 480,220" fill="none" stroke="#1a3a5a" stroke-width="2"/>
+  <path d="M0,240 Q60,230 120,240 Q180,250 240,240 Q300,230 360,240 Q420,250 480,240" fill="none" stroke="#1a3a5a" stroke-width="2"/>
+  <!-- 부두 -->
+  <rect x="0" y="190" width="480" height="20" fill="#2a1a0a"/>
+  <!-- 부두 판자 -->
+  <line x1="0" y1="195" x2="480" y2="195" stroke="#3a2a1a" stroke-width="1"/>
+  <line x1="40" y1="190" x2="40" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="80" y1="190" x2="80" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="120" y1="190" x2="120" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="160" y1="190" x2="160" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="200" y1="190" x2="200" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="240" y1="190" x2="240" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="280" y1="190" x2="280" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="320" y1="190" x2="320" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="360" y1="190" x2="360" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="400" y1="190" x2="400" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <line x1="440" y1="190" x2="440" y2="210" stroke="#3a2a1a" stroke-width="2"/>
+  <!-- 창고 -->
+  <rect x="0" y="60" width="180" height="135" fill="#2a2a2a"/>
+  <rect x="0" y="55" width="180" height="10" fill="#3a3a3a"/>
+  <!-- 창고 문 -->
+  <rect x="60" y="110" width="60" height="85" fill="#1a1a1a"/>
+  <line x1="90" y1="110" x2="90" y2="195" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="150" x2="120" y2="150" stroke="#333" stroke-width="2"/>
+  <circle cx="85" cy="152" r="4" fill="#888"/>
+  <!-- 창고 창문 -->
+  <rect x="15" y="80" width="40" height="30" fill="#0a1a2a" stroke="#555" stroke-width="2"/>
+  <line x1="35" y1="80" x2="35" y2="110" stroke="#555" stroke-width="1"/>
+  <line x1="15" y1="95" x2="55" y2="95" stroke="#555" stroke-width="1"/>
+  <!-- 의심스러운 상자들 -->
+  <rect x="150" y="145" width="50" height="45" fill="#8B4513" stroke="#6B3410" stroke-width="2" rx="2"/>
+  <line x1="150" y1="167" x2="200" y2="167" stroke="#6B3410" stroke-width="1.5"/>
+  <line x1="175" y1="145" x2="175" y2="190" stroke="#6B3410" stroke-width="1.5"/>
+  <rect x="210" y="155" width="45" height="35" fill="#8B4513" stroke="#6B3410" stroke-width="2" rx="2"/>
+  <line x1="210" y1="172" x2="255" y2="172" stroke="#6B3410" stroke-width="1.5"/>
+  <rect x="260" y="150" width="50" height="40" fill="#8B4513" stroke="#6B3410" stroke-width="2" rx="2"/>
+  <!-- 배 실루엣 -->
+  <path d="M320,230 L340,200 L440,200 L460,230 Z" fill="#1a1a3a"/>
+  <rect x="370" y="170" width="10" height="30" fill="#2a2a4a"/>
+  <rect x="390" y="160" width="8" height="40" fill="#2a2a4a"/>
+  <!-- 밀수업자 실루엣 2명 -->
+  <ellipse cx="340" cy="178" rx="16" ry="10" fill="#111"/>
+  <circle cx="340" cy="165" r="12" fill="#111"/>
+  <line x1="330" y1="175" x2="310" y2="185" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+  <line x1="350" y1="175" x2="362" y2="170" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+  <line x1="333" y1="185" x2="323" y2="200" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <line x1="347" y1="185" x2="355" y2="200" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <ellipse cx="420" cy="178" rx="16" ry="10" fill="#111"/>
+  <circle cx="420" cy="165" r="12" fill="#111"/>
+  <!-- 증거 번호 -->
+  <rect x="148" y="130" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="159" y="142" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 5. 독살 사건 - 레스토랑
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 레스토랑 배경 -->
+  <rect width="480" height="360" fill="#1a0f05"/>
+  <!-- 바닥 -->
+  <rect x="0" y="260" width="480" height="100" fill="#2a1a08"/>
+  <!-- 체커보드 바닥 -->
+  <rect x="0" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="40" y="260" width="40" height="40" fill="#2a1a08"/>
+  <rect x="80" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="120" y="260" width="40" height="40" fill="#2a1a08"/>
+  <rect x="160" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="200" y="260" width="40" height="40" fill="#2a1a08"/>
+  <rect x="240" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="280" y="260" width="40" height="40" fill="#2a1a08"/>
+  <rect x="320" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="360" y="260" width="40" height="40" fill="#2a1a08"/>
+  <rect x="400" y="260" width="40" height="40" fill="#221408" opacity="0.5"/>
+  <rect x="440" y="260" width="40" height="40" fill="#2a1a08"/>
+  <!-- 벽 -->
+  <rect x="0" y="0" width="480" height="260" fill="#2d1a08"/>
+  <!-- 벽 패턴 -->
+  <rect x="0" y="30" width="480" height="8" fill="#3a2010"/>
+  <rect x="0" y="130" width="480" height="8" fill="#3a2010"/>
+  <rect x="0" y="220" width="480" height="8" fill="#3a2010"/>
+  <!-- 촛대 조명 -->
+  <rect x="235" y="0" width="10" height="40" fill="#888"/>
+  <circle cx="240" cy="35" r="12" fill="#f0c040" opacity="0.7"/>
+  <circle cx="240" cy="35" r="5" fill="#fff"/>
+  <!-- 식탁보 있는 테이블 -->
+  <ellipse cx="240" cy="220" rx="140" ry="30" fill="#8B0000"/>
+  <rect x="100" y="200" width="280" height="25" fill="#8B0000"/>
+  <rect x="110" y="195" width="260" height="10" fill="#9B1010" rx="2"/>
+  <!-- 테이블 다리 -->
+  <rect x="150" y="225" width="12" height="60" fill="#5a3010"/>
+  <rect x="318" y="225" width="12" height="60" fill="#5a3010"/>
+  <!-- 테이블 세팅 -->
+  <!-- 접시 -->
+  <ellipse cx="185" cy="202" rx="35" ry="12" fill="#f5f5f0"/>
+  <ellipse cx="185" cy="200" rx="25" ry="8" fill="#f0e8d8"/>
+  <!-- 음식 -->
+  <ellipse cx="185" cy="199" rx="18" ry="6" fill="#8B4513"/>
+  <ellipse cx="295" cy="202" rx="35" ry="12" fill="#f5f5f0"/>
+  <ellipse cx="295" cy="200" rx="25" ry="8" fill="#f0e8d8"/>
+  <ellipse cx="295" cy="199" rx="18" ry="6" fill="#c0392b"/>
+  <!-- 와인잔 (쓰러짐) -->
+  <path d="M230,175 L240,200 L250,200" fill="none" stroke="#c0392b" stroke-width="3" opacity="0.8"/>
+  <ellipse cx="240" cy="200" rx="12" ry="4" fill="#c0392b" opacity="0.6"/>
+  <!-- 쏟아진 와인 -->
+  <ellipse cx="220" cy="200" rx="25" ry="8" fill="#8B0000" opacity="0.7"/>
+  <!-- 촛불 2개 -->
+  <rect x="155" y="170" width="6" height="25" fill="#f5f0e0"/>
+  <ellipse cx="158" cy="169" rx="4" ry="6" fill="#f0c040"/>
+  <circle cx="158" cy="166" r="2" fill="#fff"/>
+  <rect x="315" y="165" width="6" height="30" fill="#f5f0e0"/>
+  <ellipse cx="318" cy="164" rx="4" ry="6" fill="#f0c040"/>
+  <circle cx="318" cy="161" r="2" fill="#fff"/>
+  <!-- 쓰러진 캐릭터 (의자에서) -->
+  <ellipse cx="185" cy="245" rx="25" ry="14" fill="#2c3e50"/>
+  <circle cx="185" cy="228" r="18" fill="#f5cba7"/>
+  <ellipse cx="185" cy="219" rx="18" ry="10" fill="#f5d078"/>
+  <!-- 쓰러진 자세 - 테이블에 엎어짐 -->
+  <line x1="175" y1="238" x2="148" y2="255" stroke="#2c3e50" stroke-width="11" stroke-linecap="round"/>
+  <line x1="195" y1="238" x2="215" y2="252" stroke="#2c3e50" stroke-width="11" stroke-linecap="round"/>
+  <!-- 독약병 -->
+  <rect x="330" y="182" width="10" height="18" fill="#27ae60" rx="3"/>
+  <rect x="333" y="178" width="4" height="6" fill="#27ae60" rx="1"/>
+  <rect x="328" y="180" width="14" height="3" fill="#1a8a4a" rx="1"/>
+  <!-- 해골 라벨 -->
+  <circle cx="335" cy="190" r="4" fill="#fff"/>
+  <text x="335" y="193" font-size="5" text-anchor="middle" fill="#000">☠</text>
+  <!-- 증거 번호 -->
+  <rect x="323" y="165" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="334" y="177" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 6. 폐공장 - 납치 사건
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 어두운 공장 내부 -->
+  <rect width="480" height="360" fill="#0a0a0a"/>
+  <!-- 공장 바닥 -->
+  <rect x="0" y="280" width="480" height="80" fill="#1a1a1a"/>
+  <!-- 바닥 균열 -->
+  <path d="M50,290 Q80,285 100,295 Q120,305 150,295" fill="none" stroke="#333" stroke-width="1.5"/>
+  <path d="M200,300 Q230,290 260,305 Q280,315 310,300" fill="none" stroke="#333" stroke-width="1.5"/>
+  <!-- 공장 천장 구조 -->
+  <rect x="0" y="0" width="480" height="30" fill="#1a1a1a"/>
+  <!-- 파이프들 -->
+  <rect x="0" y="15" width="480" height="8" fill="#2a2a2a"/>
+  <rect x="80" y="0" width="10" height="100" fill="#222"/>
+  <rect x="200" y="0" width="10" height="80" fill="#222"/>
+  <rect x="340" y="0" width="10" height="120" fill="#222"/>
+  <!-- 환기구 -->
+  <rect x="180" y="0" width="60" height="20" fill="#222" stroke="#333" stroke-width="2"/>
+  <line x1="180" y1="5" x2="240" y2="5" stroke="#333" stroke-width="1"/>
+  <line x1="180" y1="10" x2="240" y2="10" stroke="#333" stroke-width="1"/>
+  <line x1="180" y1="15" x2="240" y2="15" stroke="#333" stroke-width="1"/>
+  <!-- 창문 (깨짐) -->
+  <rect x="30" y="50" width="80" height="60" fill="#0a1a0a" stroke="#444" stroke-width="2"/>
+  <line x1="70" y1="50" x2="70" y2="110" stroke="#444" stroke-width="1.5"/>
+  <line x1="30" y1="80" x2="110" y2="80" stroke="#444" stroke-width="1.5"/>
+  <!-- 깨진 유리 -->
+  <path d="M60,65 L75,55 L80,68 L90,58 L85,75" fill="#0a1a0a" stroke="#888" stroke-width="1"/>
+  <!-- 빛 줄기 -->
+  <polygon points="30,55 110,55 130,280 10,280" fill="#fffae0" opacity="0.04"/>
+  <!-- 큰 기계들 -->
+  <rect x="350" y="100" width="130" height="180" fill="#1e1e1e" rx="5"/>
+  <rect x="360" y="110" width="30" height="50" fill="#2a2a2a" rx="3"/>
+  <circle cx="400" cy="130" r="20" fill="#222" stroke="#444" stroke-width="3"/>
+  <circle cx="400" cy="130" r="8" fill="#333"/>
+  <rect x="395" y="160" width="50" height="20" fill="#2a2a2a" rx="2"/>
+  <!-- 드럼통 -->
+  <rect x="280" y="230" width="45" height="50" fill="#555" rx="5"/>
+  <ellipse cx="302" cy="230" rx="22" ry="7" fill="#666"/>
+  <line x1="280" y1="248" x2="325" y2="248" stroke="#444" stroke-width="2"/>
+  <line x1="280" y1="265" x2="325" y2="265" stroke="#444" stroke-width="2"/>
+  <rect x="330" y="245" width="40" height="40" fill="#444" rx="4"/>
+  <ellipse cx="350" cy="245" rx="20" ry="6" fill="#555"/>
+  <!-- 납치된 캐릭터 (의자에 묶임) -->
+  <!-- 의자 -->
+  <rect x="170" y="220" width="80" height="10" fill="#5a3010" rx="2"/>
+  <rect x="175" y="230" width="10" height="50" fill="#4a2808"/>
+  <rect x="235" y="230" width="10" height="50" fill="#4a2808"/>
+  <rect x="175" y="225" width="10" height="80" fill="#4a2808"/><!-- 등받이 -->
+  <!-- 캐릭터 -->
+  <ellipse cx="210" cy="260" rx="28" ry="18" fill="#e74c3c"/>
+  <line x1="192" y1="255" x2="165" y2="248" stroke="#e74c3c" stroke-width="10" stroke-linecap="round"/>
+  <line x1="228" y1="255" x2="252" y2="248" stroke="#e74c3c" stroke-width="10" stroke-linecap="round"/>
+  <line x1="195" y1="275" x2="178" y2="280" stroke="#e74c3c" stroke-width="10" stroke-linecap="round"/>
+  <line x1="225" y1="275" x2="242" y2="280" stroke="#e74c3c" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="210" cy="238" r="20" fill="#f5cba7"/>
+  <ellipse cx="210" cy="228" rx="20" ry="12" fill="#1a0a00"/>
+  <!-- 눈가리개 -->
+  <rect x="196" y="234" width="28" height="10" fill="#222" rx="3"/>
+  <!-- 결박 줄 -->
+  <path d="M168,250 Q180,258 192,255 Q180,262 168,256" fill="none" stroke="#8B6914" stroke-width="3"/>
+  <path d="M228,250 Q242,258 252,250 Q242,262 228,256" fill="none" stroke="#8B6914" stroke-width="3"/>
+  <!-- 손전등으로 비추는 빛 -->
+  <polygon points="0,280 0,360 120,360 80,280" fill="#fffae0" opacity="0.08"/>
+  <!-- 손전등 -->
+  <rect x="0" y="270" width="40" height="15" fill="#555" rx="5"/>
+  <ellipse cx="40" cy="277" rx="12" ry="12" fill="#ffe" opacity="0.9"/>
+  <!-- 증거 번호 -->
+  <rect x="153" y="222" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="164" y="234" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 7. 저택 정원 - 독살(식물)
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 밤 하늘 -->
+  <rect width="480" height="360" fill="#080d18"/>
+  <!-- 별 -->
+  <circle cx="40" cy="25" r="1.5" fill="#fff" opacity="0.8"/>
+  <circle cx="100" cy="10" r="1" fill="#fff" opacity="0.6"/>
+  <circle cx="200" cy="30" r="1.5" fill="#fff" opacity="0.9"/>
+  <circle cx="320" cy="8" r="1" fill="#fff" opacity="0.7"/>
+  <circle cx="430" cy="22" r="1.5" fill="#fff" opacity="0.8"/>
+  <!-- 달 -->
+  <circle cx="400" cy="60" r="35" fill="#fffde0" opacity="0.85"/>
+  <circle cx="418" cy="50" r="30" fill="#080d18"/>
+  <!-- 잔디 -->
+  <rect x="0" y="220" width="480" height="140" fill="#0a1a0a"/>
+  <!-- 잔디 질감 -->
+  <path d="M0,230 Q30,220 60,230 Q90,240 120,230 Q150,220 180,230 Q210,240 240,230 Q270,220 300,230 Q330,240 360,230 Q390,220 420,230 Q450,240 480,230" fill="none" stroke="#0d1f0d" stroke-width="2"/>
+  <!-- 저택 배경 -->
+  <rect x="130" y="60" width="220" height="165" fill="#1a1a2a"/>
+  <rect x="110" y="55" width="260" height="15" fill="#2a2a3a"/>
+  <!-- 저택 창문 -->
+  <rect x="150" y="80" width="50" height="60" fill="#f0c040" opacity="0.6" rx="3"/>
+  <line x1="175" y1="80" x2="175" y2="140" stroke="#2a2a3a" stroke-width="2"/>
+  <line x1="150" y1="110" x2="200" y2="110" stroke="#2a2a3a" stroke-width="2"/>
+  <rect x="280" y="80" width="50" height="60" fill="#f0c040" opacity="0.4" rx="3"/>
+  <line x1="305" y1="80" x2="305" y2="140" stroke="#2a2a3a" stroke-width="2"/>
+  <line x1="280" y1="110" x2="330" y2="110" stroke="#2a2a3a" stroke-width="2"/>
+  <!-- 저택 문 -->
+  <rect x="205" y="160" width="70" height="65" fill="#0a0a1a" rx="4"/>
+  <circle cx="268" cy="193" r="4" fill="#c0a020"/>
+  <!-- 정원 길 -->
+  <path d="M200,360 Q230,300 240,225 Q250,300 280,360" fill="#1a1a0a"/>
+  <!-- 관목들 -->
+  <ellipse cx="80" cy="225" rx="40" ry="25" fill="#0a2a0a"/>
+  <ellipse cx="60" cy="215" rx="28" ry="18" fill="#0d3a0d"/>
+  <ellipse cx="100" cy="218" rx="25" ry="15" fill="#0a2a0a"/>
+  <ellipse cx="400" cy="225" rx="40" ry="25" fill="#0a2a0a"/>
+  <ellipse cx="420" cy="215" rx="28" ry="18" fill="#0d3a0d"/>
+  <!-- 독성 식물 (빨간 꽃) -->
+  <ellipse cx="160" cy="235" rx="20" ry="12" fill="#1a3a0a"/>
+  <circle cx="152" cy="228" r="7" fill="#c0392b"/>
+  <circle cx="162" cy="224" r="6" fill="#e74c3c"/>
+  <circle cx="170" cy="229" r="7" fill="#c0392b"/>
+  <ellipse cx="310" cy="235" rx="20" ry="12" fill="#1a3a0a"/>
+  <circle cx="302" cy="228" r="7" fill="#c0392b"/>
+  <circle cx="312" cy="224" r="6" fill="#e74c3c"/>
+  <circle cx="320" cy="229" r="7" fill="#c0392b"/>
+  <!-- 쓰러진 캐릭터 -->
+  <ellipse cx="240" cy="300" rx="35" ry="18" fill="#2c5f2e"/>
+  <line x1="220" y1="293" x2="185" y2="280" stroke="#2c5f2e" stroke-width="12" stroke-linecap="round"/>
+  <line x1="260" y1="293" x2="290" y2="282" stroke="#2c5f2e" stroke-width="12" stroke-linecap="round"/>
+  <line x1="222" y1="315" x2="200" y2="340" stroke="#2c5f2e" stroke-width="13" stroke-linecap="round"/>
+  <line x1="258" y1="315" x2="275" y2="338" stroke="#2c5f2e" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="240" cy="278" r="22" fill="#f5cba7"/>
+  <ellipse cx="240" cy="267" rx="22" ry="14" fill="#b07028"/>
+  <!-- 독화살 -->
+  <line x1="240" y1="268" x2="200" y2="250" stroke="#5a3a1a" stroke-width="3"/>
+  <polygon points="198,248 204,244 204,252" fill="#8B4513"/>
+  <circle cx="240" cy="268" r="4" fill="#c0392b"/>
+  <!-- 증거 번호 -->
+  <rect x="178" y="262" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="189" y="274" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 8. 기차 안 - 소매치기/살인
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 기차 내부 -->
+  <rect width="480" height="360" fill="#1a1a25"/>
+  <!-- 기차 창문 (밤 경치) -->
+  <rect x="20" y="30" width="130" height="100" fill="#05080f" stroke="#444" stroke-width="3" rx="5"/>
+  <rect x="330" y="30" width="130" height="100" fill="#05080f" stroke="#444" stroke-width="3" rx="5"/>
+  <!-- 창밖 불빛들 -->
+  <circle cx="50" cy="65" r="3" fill="#f0c040" opacity="0.8"/>
+  <circle cx="80" cy="50" r="2" fill="#f0c040" opacity="0.6"/>
+  <circle cx="110" cy="75" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="130" cy="55" r="2" fill="#f0c040" opacity="0.7"/>
+  <circle cx="360" cy="65" r="3" fill="#f0c040" opacity="0.8"/>
+  <circle cx="395" cy="45" r="2" fill="#f0c040" opacity="0.6"/>
+  <circle cx="420" cy="70" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="450" cy="55" r="2" fill="#f0c040" opacity="0.7"/>
+  <!-- 기차 천장 조명 -->
+  <rect x="0" y="0" width="480" height="20" fill="#2a2a35"/>
+  <ellipse cx="120" cy="18" rx="25" ry="6" fill="#f5f5c0" opacity="0.8"/>
+  <circle cx="120" cy="14" r="5" fill="#fff"/>
+  <ellipse cx="360" cy="18" rx="25" ry="6" fill="#f5f5c0" opacity="0.8"/>
+  <circle cx="360" cy="14" r="5" fill="#fff"/>
+  <!-- 좌석들 -->
+  <rect x="20" y="160" width="100" height="80" fill="#2a1a4a" rx="5"/>
+  <rect x="20" y="140" width="100" height="25" fill="#3a2a5a" rx="3"/>
+  <rect x="360" y="160" width="100" height="80" fill="#2a1a4a" rx="5"/>
+  <rect x="360" y="140" width="100" height="25" fill="#3a2a5a" rx="3"/>
+  <!-- 통로 -->
+  <rect x="0" y="240" width="480" height="120" fill="#1a1a1a"/>
+  <line x1="0" y1="260" x2="480" y2="260" stroke="#2a2a2a" stroke-width="2"/>
+  <!-- 피해자 (좌석에 쓰러짐) -->
+  <ellipse cx="70" cy="175" rx="25" ry="15" fill="#3a2a2a"/>
+  <circle cx="70" cy="157" r="19" fill="#f5cba7"/>
+  <ellipse cx="70" cy="147" rx="19" ry="11" fill="#c8a060"/>
+  <!-- 쓰러진 고개 -->
+  <line x1="60" y1="168" x2="40" y2="182" stroke="#3a2a2a" stroke-width="10" stroke-linecap="round"/>
+  <line x1="80" y1="168" x2="95" y2="178" stroke="#3a2a2a" stroke-width="10" stroke-linecap="round"/>
+  <!-- 혈흔 -->
+  <ellipse cx="55" cy="165" rx="15" ry="6" fill="#8b0000" opacity="0.7"/>
+  <!-- 범인 (도망가는 중) -->
+  <ellipse cx="280" cy="265" rx="20" ry="13" fill="#111"/>
+  <circle cx="280" cy="250" r="15" fill="#111"/>
+  <line x1="268" y1="262" x2="248" y2="280" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <line x1="292" y1="262" x2="308" y2="275" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <line x1="272" y1="275" x2="258" y2="295" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <line x1="288" y1="275" x2="300" y2="294" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <!-- 훔친 가방 -->
+  <rect x="300" y="270" width="28" height="20" fill="#8B4513" rx="3"/>
+  <path d="M308,270 Q314,260 320,270" fill="none" stroke="#8B4513" stroke-width="3"/>
+  <!-- 칼 -->
+  <line x1="105" y1="168" x2="125" y2="150" stroke="#888" stroke-width="4"/>
+  <polygon points="124,148 130,144 128,154" fill="#ccc"/>
+  <rect x="100" y="168" width="10" height="6" fill="#8B4513" rx="2"/>
+  <!-- 증거 번호 -->
+  <rect x="93" y="150" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="104" y="162" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 9. 카지노 - 사기 사건
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 카지노 배경 -->
+  <rect width="480" height="360" fill="#0d0505"/>
+  <!-- 화려한 천장 -->
+  <rect x="0" y="0" width="480" height="40" fill="#1a0505"/>
+  <!-- 샹들리에 -->
+  <circle cx="240" cy="10" r="20" fill="#c0a020" opacity="0.9"/>
+  <circle cx="240" cy="10" r="12" fill="#f0c040"/>
+  <line x1="220" y1="20" x2="215" y2="35" stroke="#c0a020" stroke-width="2"/>
+  <line x1="230" y1="25" x2="225" y2="38" stroke="#c0a020" stroke-width="2"/>
+  <line x1="240" y1="28" x2="240" y2="40" stroke="#c0a020" stroke-width="2"/>
+  <line x1="250" y1="25" x2="255" y2="38" stroke="#c0a020" stroke-width="2"/>
+  <line x1="260" y1="20" x2="265" y2="35" stroke="#c0a020" stroke-width="2"/>
+  <circle cx="215" cy="37" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="225" cy="40" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="240" cy="42" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="255" cy="40" r="4" fill="#f0c040" opacity="0.9"/>
+  <circle cx="265" cy="37" r="4" fill="#f0c040" opacity="0.9"/>
+  <!-- 벽 장식 -->
+  <rect x="0" y="0" width="20" height="360" fill="#1a0808"/>
+  <rect x="460" y="0" width="20" height="360" fill="#1a0808"/>
+  <!-- 카드 테이블 -->
+  <ellipse cx="240" cy="220" rx="180" ry="80" fill="#0a3a1a"/>
+  <ellipse cx="240" cy="220" rx="165" ry="68" fill="#0d4a22" stroke="#c0a020" stroke-width="2"/>
+  <!-- 테이블 테두리 장식 -->
+  <ellipse cx="240" cy="220" rx="180" ry="80" fill="none" stroke="#c0a020" stroke-width="3"/>
+  <!-- 테이블 다리 -->
+  <rect x="150" y="295" width="15" height="65" fill="#5a3010"/>
+  <rect x="315" y="295" width="15" height="65" fill="#5a3010"/>
+  <!-- 카드들 -->
+  <rect x="190" y="195" width="28" height="40" fill="#fff" rx="3"/>
+  <text x="200" y="215" font-size="12" text-anchor="middle" fill="#e74c3c">♥</text>
+  <text x="197" y="207" font-size="8" fill="#e74c3c">A</text>
+  <rect x="225" y="190" width="28" height="40" fill="#fff" rx="3" transform="rotate(-10,239,210)"/>
+  <text x="239" y="210" font-size="12" text-anchor="middle" fill="#111">♠</text>
+  <rect x="258" y="193" width="28" height="40" fill="#fff" rx="3" transform="rotate(5,272,213)"/>
+  <text x="272" y="213" font-size="12" text-anchor="middle" fill="#e74c3c">♦</text>
+  <!-- 칩들 -->
+  <ellipse cx="160" cy="225" rx="14" ry="6" fill="#e74c3c"/>
+  <ellipse cx="160" cy="222" rx="14" ry="6" fill="#c0392b"/>
+  <ellipse cx="160" cy="219" rx="14" ry="6" fill="#e74c3c"/>
+  <ellipse cx="320" cy="225" rx="14" ry="6" fill="#3498db"/>
+  <ellipse cx="320" cy="222" rx="14" ry="6" fill="#2980b9"/>
+  <ellipse cx="320" cy="219" rx="14" ry="6" fill="#3498db"/>
+  <!-- 딜러 캐릭터 (사기꾼) -->
+  <ellipse cx="240" cy="155" rx="22" ry="14" fill="#1a1a2a"/>
+  <circle cx="240" cy="138" r="19" fill="#f5cba7"/>
+  <ellipse cx="240" cy="128" rx="19" ry="12" fill="#1a0a00"/>
+  <!-- 나쁜 미소 -->
+  <path d="M232,142 Q240,148 248,142" fill="none" stroke="#333" stroke-width="2"/>
+  <circle cx="233" cy="135" r="3" fill="#333"/>
+  <circle cx="247" cy="135" r="3" fill="#333"/>
+  <line x1="218" y1="148" x2="195" y2="155" stroke="#1a1a2a" stroke-width="9" stroke-linecap="round"/>
+  <line x1="262" y1="148" x2="285" y2="155" stroke="#1a1a2a" stroke-width="9" stroke-linecap="round"/>
+  <!-- 소매 속 카드 (증거) -->
+  <rect x="180" y="153" width="20" height="28" fill="#fff" rx="2" transform="rotate(30,190,167)"/>
+  <text x="190" y="170" font-size="8" text-anchor="middle" fill="#e74c3c" transform="rotate(30,190,167)">A♠</text>
+  <!-- 피해자 (분노한 캐릭터) -->
+  <ellipse cx="370" cy="175" rx="20" ry="13" fill="#8B4513"/>
+  <circle cx="370" cy="160" r="17" fill="#f5cba7"/>
+  <ellipse cx="370" cy="151" rx="17" ry="10" fill="#5a3010"/>
+  <!-- 화난 표정 -->
+  <path d="M363,165 Q370,160 377,165" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="361" y1="154" x2="367" y2="157" stroke="#333" stroke-width="2"/>
+  <line x1="379" y1="154" x2="373" y2="157" stroke="#333" stroke-width="2"/>
+  <line x1="353" y1="170" x2="335" y2="178" stroke="#8B4513" stroke-width="8" stroke-linecap="round"/>
+  <!-- 증거 번호 -->
+  <rect x="170" y="155" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="181" y="167" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`,
+
+// 10. 마지막 사건 - 탐정 사무소 침입
+`<svg viewBox="0 0 480 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- 사무소 내부 (어두움) -->
+  <rect width="480" height="360" fill="#0a0805"/>
+  <!-- 바닥 -->
+  <rect x="0" y="290" width="480" height="70" fill="#1a1208"/>
+  <line x1="0" y1="310" x2="480" y2="310" stroke="#2a2210" stroke-width="1"/>
+  <line x1="96" y1="290" x2="96" y2="360" stroke="#2a2210" stroke-width="1"/>
+  <line x1="192" y1="290" x2="192" y2="360" stroke="#2a2210" stroke-width="1"/>
+  <line x1="288" y1="290" x2="288" y2="360" stroke="#2a2210" stroke-width="1"/>
+  <line x1="384" y1="290" x2="384" y2="360" stroke="#2a2210" stroke-width="1"/>
+  <!-- 벽 -->
+  <rect x="0" y="0" width="480" height="290" fill="#1a1508"/>
+  <!-- 창문 (달빛) -->
+  <rect x="340" y="30" width="120" height="140" fill="#080d18" stroke="#3a3028" stroke-width="4" rx="5"/>
+  <line x1="400" y1="30" x2="400" y2="170" stroke="#3a3028" stroke-width="3"/>
+  <line x1="340" y1="100" x2="460" y2="100" stroke="#3a3028" stroke-width="3"/>
+  <!-- 달빛 -->
+  <polygon points="340,30 460,30 500,290 300,290" fill="#fffae0" opacity="0.04"/>
+  <circle cx="400" cy="70" r="22" fill="#fffde0" opacity="0.85"/>
+  <circle cx="414" cy="62" r="18" fill="#080d18"/>
+  <!-- 탐정 책상 -->
+  <rect x="80" y="210" width="260" height="14" fill="#5a3a10" rx="3"/>
+  <rect x="85" y="224" width="14" height="66" fill="#4a2a08"/>
+  <rect x="321" y="224" width="14" height="66" fill="#4a2a08"/>
+  <!-- 책상 위 물건들 -->
+  <!-- 사건 파일들 -->
+  <rect x="90" y="192" width="70" height="18" fill="#f5e6d0" transform="rotate(-5,125,201)"/>
+  <rect x="95" y="190" width="70" height="18" fill="#ecdfc8" transform="rotate(2,130,199)"/>
+  <rect x="100" y="188" width="70" height="18" fill="#e5d8c0" transform="rotate(-2,135,197)"/>
+  <!-- 사진들 (증거) -->
+  <rect x="185" y="188" width="40" height="30" fill="#fff"/>
+  <rect x="188" y="191" width="34" height="24" fill="#87CEEB" opacity="0.6"/>
+  <rect x="230" y="185" width="40" height="30" fill="#fff" transform="rotate(8,250,200)"/>
+  <!-- 전화기 -->
+  <rect x="290" y="193" width="40" height="18" fill="#222" rx="5"/>
+  <rect x="294" y="190" width="32" height="8" fill="#333" rx="3"/>
+  <!-- 탐정 캐릭터 (책상에 앉아있다 습격당함) -->
+  <ellipse cx="200" cy="270" rx="28" ry="16" fill="#2c3e50"/>
+  <circle cx="200" cy="250" r="20" fill="#f5cba7"/>
+  <ellipse cx="200" cy="240" rx="20" ry="12" fill="#1a0a00"/>
+  <!-- 탐정 모자 -->
+  <ellipse cx="200" cy="232" rx="24" ry="7" fill="#222"/>
+  <rect x="184" y="218" width="32" height="14" fill="#222" rx="3"/>
+  <!-- 놀란 표정 -->
+  <circle cx="192" cy="248" r="4" fill="#fff"/>
+  <circle cx="208" cy="248" r="4" fill="#fff"/>
+  <circle cx="192" cy="248" r="2" fill="#111"/>
+  <circle cx="208" cy="248" r="2" fill="#111"/>
+  <path d="M194,257 Q200,253 206,257" fill="none" stroke="#333" stroke-width="2"/>
+  <!-- 팔 -->
+  <line x1="180" y1="263" x2="152" y2="252" stroke="#2c3e50" stroke-width="11" stroke-linecap="round"/>
+  <line x1="220" y1="263" x2="248" y2="255" stroke="#2c3e50" stroke-width="11" stroke-linecap="round"/>
+  <!-- 침입자 실루엣 -->
+  <ellipse cx="360" cy="265" rx="22" ry="14" fill="#111"/>
+  <circle cx="360" cy="248" r="18" fill="#111"/>
+  <line x1="345" y1="260" x2="320" y2="275" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <line x1="375" y1="260" x2="396" y2="272" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  <line x1="348" y1="276" x2="330" y2="298" stroke="#111" stroke-width="11" stroke-linecap="round"/>
+  <line x1="372" y1="276" x2="388" y2="297" stroke="#111" stroke-width="11" stroke-linecap="round"/>
+  <!-- 침입자 손에 서류 -->
+  <rect x="395" y="265" width="30" height="20" fill="#f5e6d0" transform="rotate(-20,410,275)"/>
+  <!-- 깨진 자물쇠 (침입 흔적) -->
+  <rect x="20" y="265" width="35" height="28" fill="#555" rx="3"/>
+  <path d="M25,265 Q37,252 49,265" fill="none" stroke="#555" stroke-width="5"/>
+  <path d="M26,265 Q37,255 48,265" fill="none" stroke="#888" stroke-width="3"/>
+  <circle cx="37" cy="278" r="5" fill="#333"/>
+  <!-- 자물쇠 끊긴 부분 -->
+  <line x1="42" y1="255" x2="50" y2="248" stroke="#888" stroke-width="3"/>
+  <!-- 증거 번호 -->
+  <rect x="18" y="247" width="22" height="18" fill="#f0c040" rx="2"/>
+  <text x="29" y="259" font-size="9" fill="#000" text-anchor="middle" font-weight="bold">①</text>
+</svg>`
+
+];
+
+// ── 스테이지 데이터 ──
+const stages = [
+  { title: '밀실의 그림자',    place: '📍 저택 서재',        caseNum: '001' },
+  { title: '골목의 목격자',    place: '📍 도심 뒷골목',      caseNum: '002' },
+  { title: '사라진 걸작',      place: '📍 시립 미술관',      caseNum: '003' },
+  { title: '항구의 비밀',      place: '📍 3번 부두',         caseNum: '004' },
+  { title: '마지막 만찬',      place: '📍 고급 레스토랑',    caseNum: '005' },
+  { title: '폐공장의 메아리',  place: '📍 동쪽 폐공장',      caseNum: '006' },
+  { title: '정원의 독',        place: '📍 해밀턴 저택 정원', caseNum: '007' },
+  { title: '열차 안의 악마',   place: '📍 심야 특급열차',    caseNum: '008' },
+  { title: '패의 속임수',      place: '📍 블랙잭 카지노',    caseNum: '009' },
+  { title: '탐정을 노리는 자', place: '📍 나의 사무소',      caseNum: '010' },
+];
+
+// 인트로 대사 — lines 배열에 { speaker, text } 형태로 입력
+// 마지막 줄 클릭 시 게임으로 넘어감
+const dialogue = [
+  { // 001 밀실의 그림자
+    lines: [
+      { speaker: '🔍 나', text: '늦은 밤, 해밀턴 저택에서 신고가 들어왔다.' },
+      { speaker: '🔍 나', text: '피해자는 서재에서 발견됐다고 한다.\n문은 안쪽에서 잠겨 있었다.' },
+      { speaker: '📞 조수', text: '진원, 현장 사진이 손상됐어.\n아무래도 우리가 원본을 복원해야...' },
+      { speaker: '🔍 나', text: '...좋아. 한번 해보자.' },
+    ],
+    result90: '완벽하게 복원됐군. 좋아', result70: '이정도면 나쁘지 않군', result50: '이거 영 찝찝한데...'
+  },
+  { // 002 골목의 목격자
+    lines: [
+      { speaker: '🔍 나', text: '도심 뒷골목에서 강도 사건이 발생했다.' },
+      { speaker: '🔍 나', text: '목격자가 찍은 사진이 있다고 했는데...\n파일이 깨져 있었다.' },
+      { speaker: '📞 조수', text: '복원하면 범인 얼굴이 나올 수도 있어요!' },
+      { speaker: '🔍 나', text: '서두르자. 범인이 도주 중이다.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 003 사라진 걸작
+    lines: [
+      { speaker: '🔍 나', text: '시립 미술관에서 연락이 왔다.\n어젯밤 전시된 명화 한 점이 사라졌다.' },
+      { speaker: '📞 관장', text: '경비원이 있었는데도... 어떻게 된 건지.' },
+      { speaker: '🔍 나', text: '현장 CCTV 사진이 손상됐군.\n복원해야 침입 경로를 알 수 있어.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 004 항구의 비밀
+    lines: [
+      { speaker: '🔍 나', text: '3번 부두. 밀수 신고가 들어온 곳이다.' },
+      { speaker: '🔍 나', text: '항구 감시 카메라 사진이 뭉개져 있다.\n의도적으로 망가뜨린 것 같은데.' },
+      { speaker: '📞 세관', text: '그 상자 안에 뭐가 있는지 확인해야 합니다.' },
+      { speaker: '🔍 나', text: '사진부터 복원하자.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 005 마지막 만찬
+    lines: [
+      { speaker: '🔍 나', text: '고급 레스토랑에서 의문사가 발생했다.\n테이블 위엔 독약병이 있었다고 한다.' },
+      { speaker: '📞 조수', text: '같이 식사하던 사람이 범인일까요?' },
+      { speaker: '🔍 나', text: '현장 사진을 봐야 알겠지.\n누가 그 자리에 있었는지 확인하자.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 006 폐공장의 메아리
+    lines: [
+      { speaker: '🔍 나', text: '동쪽 폐공장. 익명의 제보가 들어왔다.' },
+      { speaker: '📞 제보자', text: '거기 가면... 묶인 사람이 있어요.\n빨리 가세요.' },
+      { speaker: '🔍 나', text: '현장 사진이 손상됐다.\n위치를 파악하려면 복원이 필요해.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 007 정원의 독
+    lines: [
+      { speaker: '🔍 나', text: '해밀턴 저택 두 번째 사건이다.\n이번엔 정원에서 시체가 발견됐다.' },
+      { speaker: '📞 경찰', text: '독화살이 꽂혀 있었습니다.\n정원 어딘가에 독성 식물이...' },
+      { speaker: '🔍 나', text: '저택과 관련된 사건이 둘이나.\n우연이 아닐 수 있어.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 008 열차 안의 악마
+    lines: [
+      { speaker: '🔍 나', text: '심야 특급열차. 객차 안에서 사건이 났다.' },
+      { speaker: '📞 승무원', text: '8호칸 승객이 쓰러졌어요!\n범인은 도주 중입니다!' },
+      { speaker: '🔍 나', text: '폐쇄된 열차 안이다.\n범인은 아직 이 안에 있어.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 009 패의 속임수
+    lines: [
+      { speaker: '🔍 나', text: '블랙잭 카지노에서 사기 사건이 접수됐다.' },
+      { speaker: '📞 카지노', text: '딜러가 소매 안에 카드를 숨겼다는\n제보가 들어왔습니다.' },
+      { speaker: '🔍 나', text: '도박판의 속임수는 눈 깜짝할 새 벌어지지.\n사진을 복원해서 증거를 잡아야 해.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+  { // 010 탐정을 노리는 자
+    lines: [
+      { speaker: '🔍 나', text: '사무소에 돌아왔을 때\n뭔가 이상한 걸 느꼈다.' },
+      { speaker: '🔍 나', text: '서랍이 뒤져져 있었고\n자물쇠가 부서져 있었다.' },
+      { speaker: '🔍 나', text: '...누군가 나를 노리고 있다.\n이 모든 사건의 끝이 여기 있는 것 같아.' },
+    ],
+    result90: '', result70: '', result50: ''
+  },
+];
+
+const initValues = [
+  {brightness:60,  contrast:140, hue:30,  blur:18, x:45,  y:-35},
+  {brightness:150, contrast:60,  hue:0,   blur:22, x:-50, y:40 },
+  {brightness:80,  contrast:160, hue:60,  blur:15, x:55,  y:-45},
+  {brightness:40,  contrast:120, hue:20,  blur:25, x:-60, y:50 },
+  {brightness:130, contrast:80,  hue:180, blur:20, x:50,  y:-30},
+  {brightness:70,  contrast:150, hue:90,  blur:28, x:-45, y:55 },
+  {brightness:160, contrast:70,  hue:45,  blur:16, x:60,  y:-50},
+  {brightness:50,  contrast:130, hue:270, blur:30, x:-55, y:45 },
+  {brightness:120, contrast:90,  hue:120, blur:12, x:65,  y:-40},
+  {brightness:90,  contrast:155, hue:15,  blur:24, x:-60, y:-50},
+];
+
+const cleared = new Array(stages.length).fill(false);
+let cur = 0, s = {}, goal = {};
+
+const editLayer  = document.getElementById('edit-layer');
+const targetFrame = document.getElementById('target-frame');
+
+function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+// ── 인트로 씬 ──
+let introLines = [];   // 현재 스테이지의 대사 배열
+let introIdx   = 0;    // 현재 줄 인덱스
+let typing     = false; // 타이핑 중 여부
+let typeTimer  = null;
+
+function showIntro(i) {
+  cur = i;
+  const st = stages[i];
+
+  // 배경에 SVG 삽입
+  document.getElementById('intro-bg').innerHTML = scenes[i];
+  const bgSvg = document.getElementById('intro-bg').querySelector('svg');
+  if (bgSvg) { bgSvg.style.width='100%'; bgSvg.style.height='100%'; }
+
+  // 사건 제목 세팅
+  document.getElementById('intro-case-num').textContent = `CASE #${st.caseNum}`;
+  document.getElementById('intro-title').textContent    = st.title;
+  document.getElementById('intro-place').textContent    = st.place;
+
+  // 대사 줄 목록 (배열 형태로)
+  introLines = dialogue[i].lines || [{ speaker: '', text: '...' }];
+  introIdx   = -1;
+
+  // 화면 표시
+  document.getElementById('intro-screen').style.display = 'block';
+  document.getElementById('game-screen').style.display  = 'none';
+  document.getElementById('submit-btn').style.display   = 'none';
+
+  // 제목 잠깐 보여주다가 첫 대사 시작
+  const titleBox = document.getElementById('intro-title-box');
+  titleBox.classList.add('show');
+  document.getElementById('subtitle-bar').classList.remove('show');
+
+  setTimeout(() => {
+    titleBox.classList.remove('show');
+    setTimeout(() => introNext(), 400);
+  }, 1800);
+
+  renderDots();
+}
+
+function introNext() {
+  // 타이핑 중이면 즉시 완성
+  if (typing) {
+    clearTimeout(typeTimer);
+    typing = false;
+    const line = introLines[introIdx];
+    document.getElementById('subtitle-text').textContent = line.text;
+    document.getElementById('subtitle-hint').classList.add('pulse');
+    return;
+  }
+
+  introIdx++;
+
+  // 마지막 줄 이후 → 게임 시작
+  if (introIdx >= introLines.length) {
+    document.getElementById('intro-screen').style.display = 'none';
+    startGame();
+    return;
+  }
+
+  const line = introLines[introIdx];
+  const bar  = document.getElementById('subtitle-bar');
+  bar.classList.add('show');
+
+  document.getElementById('subtitle-speaker').textContent = line.speaker || '';
+  document.getElementById('subtitle-hint').classList.remove('pulse');
+
+  // 타이핑 효과
+  const el = document.getElementById('subtitle-text');
+  el.textContent = '';
+  let charIdx = 0;
+  typing = true;
+
+  function typeChar() {
+    if (charIdx < line.text.length) {
+      el.textContent += line.text[charIdx++];
+      typeTimer = setTimeout(typeChar, 28);
+    } else {
+      typing = false;
+      document.getElementById('subtitle-hint').classList.add('pulse');
+    }
+  }
+  typeChar();
+}
+
+function introClick() { introNext(); }
+
+// ── 게임 시작 ──
+function startGame() {
+  document.getElementById('intro-screen').style.display = 'none';
+  document.getElementById('game-screen').style.display  = 'flex';
+  document.getElementById('submit-btn').style.display   = 'inline-block';
+
+  // SVG 삽입
+  targetFrame.innerHTML  = scenes[cur];
+  editLayer.innerHTML    = scenes[cur];
+
+  goal = {
+    brightness: rnd(70, 140), contrast: rnd(70, 140),
+    hue: rnd(0, 60), blur: 0, x: 0, y: 0,
+  };
+
+  const off = initValues[cur];
+  s = {
+    brightness: Math.max(0,   Math.min(200, goal.brightness + off.brightness - 100)),
+    contrast:   Math.max(0,   Math.min(200, goal.contrast   + off.contrast   - 100)),
+    hue:        (goal.hue + off.hue) % 360,
+    blur:       off.blur,
+    x:          off.x,
+    y:          off.y,
+  };
+
+  targetFrame.querySelector('svg').style.filter = `brightness(${goal.brightness}%) contrast(${goal.contrast}%) hue-rotate(${goal.hue}deg)`;
+
+  document.getElementById('sl-brightness').value = s.brightness;
+  document.getElementById('sl-contrast').value   = s.contrast;
+  document.getElementById('sl-hue').value        = s.hue;
+  document.getElementById('sl-blur').value       = s.blur;
+  document.querySelectorAll('#color-panel .val')[0].textContent = s.brightness;
+  document.querySelectorAll('#color-panel .val')[1].textContent = s.contrast;
+  document.querySelectorAll('#color-panel .val')[2].textContent = s.hue;
+  document.querySelector('#blur-panel .val').textContent = s.blur + 'px';
+
+  closeAllPanels();
+  applyFilter();
+}
+
+function applyFilter() {
+  const svg = editLayer.querySelector('svg');
+  if (!svg) return;
+  svg.style.filter    = `brightness(${s.brightness}%) contrast(${s.contrast}%) hue-rotate(${s.hue}deg) blur(${s.blur}px)`;
+  svg.style.transform = `translate(calc(-50% + ${s.x}px), calc(-50% + ${s.y}px))`;
+}
+
+function set(key, input) {
+  s[key] = parseFloat(input.value);
+  input.closest('.row').querySelector('.val').textContent = key === 'blur' ? s[key] + 'px' : s[key];
+  applyFilter();
+}
+
+function movePos(dir) {
+  if (dir === 'up')    s.y -= 4;
+  if (dir === 'down')  s.y += 4;
+  if (dir === 'left')  s.x -= 4;
+  if (dir === 'right') s.x += 4;
+  applyFilter();
+}
+
+function calcScore() {
+  const diffs = [
+    Math.abs(s.brightness - goal.brightness) / 200,
+    Math.abs(s.contrast   - goal.contrast)   / 200,
+    Math.abs(s.hue        - goal.hue)        / 180,
+    Math.abs(s.blur       - goal.blur)       / 40,
+    (Math.abs(s.x - goal.x) + Math.abs(s.y - goal.y)) / 260,
+  ];
+  return Math.max(0, Math.round((1 - diffs.reduce((a,b)=>a+b) / diffs.length) * 100));
+}
+
+function submitAnswer() {
+  const score = calcScore();
+  const dl = dialogue[cur];
+  let grade, color, resultText;
+
+  if (score >= 90) {
+    grade = '완벽해요!'; color = '#27ae60';
+    resultText = dl.result90 || '...';
+  } else if (score >= 70) {
+    grade = '잘했어요!'; color = '#e67e22';
+    resultText = dl.result70 || '...';
+  } else {
+    grade = '적당해요!'; color = '#c0392b';
+    resultText = dl.result50 || '...';
+  }
+
+  document.getElementById('modal-case').textContent      = `CASE #${stages[cur].caseNum} — ${stages[cur].title}`;
+  document.getElementById('modal-score').textContent     = score + '%';
+  document.getElementById('modal-grade').textContent     = grade;
+  document.getElementById('modal-grade').style.color     = color;
+  document.getElementById('modal-dialogue').textContent  = resultText;
+
+  cleared[cur] = true;
+  document.getElementById('btn-next').style.display = cur < stages.length - 1 ? 'inline-block' : 'none';
+  document.getElementById('modal-bg').classList.add('open');
+  renderDots();
+}
+
+function retry()      { closeModal(); startGame(); }
+function nextStage()  { closeModal(); showIntro(cur + 1); }
+function closeModal() { document.getElementById('modal-bg').classList.remove('open'); }
+
+let openPanel = null, activeBtn = null;
+
+function toggle(panelId, btn) {
+  const panel = document.getElementById(panelId);
+  if (openPanel === panel) { closeAllPanels(); return; }
+  closeAllPanels();
+  panel.style.display = 'block';
+  document.getElementById('panel').classList.add('open');
+  btn.classList.add('active');
+  openPanel = panel; activeBtn = btn;
+}
+
+function closeAllPanels() {
+  ['color-panel','pos-panel','blur-panel'].forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('panel').classList.remove('open');
+  document.querySelectorAll('.side-btn').forEach(b => b.classList.remove('active'));
+  openPanel = activeBtn = null;
+}
+
+function renderDots() {
+  const bar = document.getElementById('stage-bar');
+  bar.innerHTML = '';
+  stages.forEach((st, i) => {
+    const unlocked = i === 0 || cleared[i - 1];
+    const dot = document.createElement('button');
+    dot.className = 'stage-dot' + (i===cur?' current':'') + (cleared[i]?' done':'') + (!unlocked?' locked':'');
+    dot.textContent = unlocked ? i + 1 : '🔒';
+    dot.title = unlocked ? `#${st.caseNum} ${st.title}` : '이전 사건을 먼저 해결하세요';
+    dot.onclick = () => { if (unlocked) showIntro(i); };
+    bar.appendChild(dot);
+  });
+}
+
+// 시작
+showIntro(0);
+</script>
+</body>
+</html>
